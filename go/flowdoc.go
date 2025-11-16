@@ -14,6 +14,226 @@ import (
     msgpack "github.com/vmihailenco/msgpack/v5"
 )
 
+// ============================================
+// Mapping Model Support
+// ============================================
+
+type FieldDefinition struct {
+    FullName  string
+    Alias     string
+    FieldType string
+    FieldID   *int
+}
+
+type ModelDefinition struct {
+    Name     string
+    Fields   map[string]*FieldDefinition // indexed by full name
+    AliasMap map[string]string           // alias -> full name
+}
+
+func NewModelDefinition(name string) *ModelDefinition {
+    return &ModelDefinition{
+        Name:     name,
+        Fields:   make(map[string]*FieldDefinition),
+        AliasMap: make(map[string]string),
+    }
+}
+
+func (m *ModelDefinition) AddField(field *FieldDefinition) {
+    m.Fields[field.FullName] = field
+    m.AliasMap[field.Alias] = field.FullName
+}
+
+type ModelRegistry struct {
+    models map[string]*ModelDefinition
+}
+
+func NewModelRegistry() *ModelRegistry {
+    return &ModelRegistry{
+        models: make(map[string]*ModelDefinition),
+    }
+}
+
+func (r *ModelRegistry) RegisterModel(model *ModelDefinition) {
+    r.models[model.Name] = model
+}
+
+func (r *ModelRegistry) GetModel(name string) *ModelDefinition {
+    return r.models[name]
+}
+
+func parseTypedValue(raw string, fieldType string) (interface{}, error) {
+    v := strings.TrimSpace(raw)
+
+    switch fieldType {
+    case "bool":
+        if v == "true" {
+            return true, nil
+        }
+        if v == "false" {
+            return false, nil
+        }
+        return nil, fmt.Errorf("invalid boolean value: %s", v)
+
+    case "int":
+        i, err := strconv.Atoi(v)
+        if err != nil {
+            return nil, fmt.Errorf("invalid integer value: %s", v)
+        }
+        return i, nil
+
+    case "float":
+        f, err := strconv.ParseFloat(v, 64)
+        if err != nil {
+            return nil, fmt.Errorf("invalid float value: %s", v)
+        }
+        return f, nil
+
+    case "date":
+        // Validate YYYY-MM-DD format
+        matched, _ := regexp.MatchString(`^\d{4}-\d{2}-\d{2}$`, v)
+        if !matched {
+            return nil, fmt.Errorf("invalid date format (expected YYYY-MM-DD): %s", v)
+        }
+        return v, nil // Keep as string for JSON compatibility
+
+    case "datetime":
+        // Validate ISO 8601 datetime
+        matched, _ := regexp.MatchString(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}`, v)
+        if !matched {
+            return nil, fmt.Errorf("invalid datetime format (expected ISO 8601): %s", v)
+        }
+        return v, nil // Keep as string for JSON compatibility
+
+    default: // "string" or unknown type
+        // Remove quotes if present
+        if strings.HasPrefix(v, "\"") && strings.HasSuffix(v, "\"") {
+            return v[1 : len(v)-1], nil
+        }
+        return v, nil
+    }
+}
+
+func extractModelsFromMap(data map[string]interface{}) *ModelRegistry {
+    modelsVal, ok := data["$models"]
+    if !ok {
+        return nil
+    }
+
+    modelsData, ok := modelsVal.(map[string]interface{})
+    if !ok {
+        return nil
+    }
+
+    registry := NewModelRegistry()
+
+    for modelName, modelSpecVal := range modelsData {
+        modelSpec, ok := modelSpecVal.(map[string]interface{})
+        if !ok {
+            continue
+        }
+
+        fieldsVal, ok := modelSpec["fields"]
+        if !ok {
+            continue
+        }
+
+        fieldsData, ok := fieldsVal.(map[string]interface{})
+        if !ok {
+            continue
+        }
+
+        modelDef := NewModelDefinition(modelName)
+
+        for fullName, fieldSpecVal := range fieldsData {
+            fieldSpec, ok := fieldSpecVal.(map[string]interface{})
+            if !ok {
+                continue
+            }
+
+            alias := fullName
+            if a, ok := fieldSpec["alias"]; ok {
+                if aliasStr, ok := a.(string); ok {
+                    alias = aliasStr
+                }
+            }
+
+            fieldType := "string"
+            if t, ok := fieldSpec["type"]; ok {
+                if typeStr, ok := t.(string); ok {
+                    fieldType = typeStr
+                }
+            }
+
+            var fieldID *int
+            if id, ok := fieldSpec["id"]; ok {
+                if idInt, ok := id.(int); ok {
+                    fieldID = &idInt
+                }
+            }
+
+            fieldDef := &FieldDefinition{
+                FullName:  fullName,
+                Alias:     alias,
+                FieldType: fieldType,
+                FieldID:   fieldID,
+            }
+
+            modelDef.AddField(fieldDef)
+        }
+
+        registry.RegisterModel(modelDef)
+    }
+
+    return registry
+}
+
+func applyModelToMap(data map[string]interface{}, model *ModelDefinition) map[string]interface{} {
+    result := make(map[string]interface{})
+
+    for key, value := range data {
+        // Check if this key is an alias
+        fullName := key
+        if fn, ok := model.AliasMap[key]; ok {
+            fullName = fn
+        }
+
+        fieldDef := model.Fields[fullName]
+
+        // Process value
+        if nestedMap, ok := value.(map[string]interface{}); ok {
+            result[fullName] = applyModelToMap(nestedMap, model)
+        } else if arr, ok := value.([]interface{}); ok {
+            newArr := make([]interface{}, len(arr))
+            for i, item := range arr {
+                if itemMap, ok := item.(map[string]interface{}); ok {
+                    newArr[i] = applyModelToMap(itemMap, model)
+                } else {
+                    newArr[i] = item
+                }
+            }
+            result[fullName] = newArr
+        } else {
+            // Apply type conversion if field definition exists
+            if fieldDef != nil {
+                if typedVal, err := parseTypedValue(fmt.Sprintf("%v", value), fieldDef.FieldType); err == nil {
+                    result[fullName] = typedVal
+                } else {
+                    result[fullName] = value
+                }
+            } else {
+                result[fullName] = value
+            }
+        }
+    }
+
+    return result
+}
+
+// ============================================
+// Core Parsing Functions
+// ============================================
+
 func tokenizeLines(text string) []string {
     text = strings.ReplaceAll(text, "\t", "  ")
     var out []string
@@ -177,4 +397,82 @@ func ConvertJSONToFlow(jsonText string) (string, error) {
     var obj map[string]interface{}
     if err := json.Unmarshal([]byte(jsonText), &obj); err != nil { return "", err }
     return StringifyFlow(obj), nil
+}
+
+func ParseFlowWithModel(text string, registry *ModelRegistry) (map[string]interface{}, error) {
+    // First, parse normally
+    data := ParseFlow(text)
+
+    // Extract or use provided registry
+    modelRegistry := registry
+    if modelRegistry == nil {
+        modelRegistry = extractModelsFromMap(data)
+    }
+
+    // Check for use_model directive
+    if modelRegistry != nil {
+        if modelNameVal, ok := data["use_model"]; ok {
+            modelName, ok := modelNameVal.(string)
+            if !ok {
+                return nil, fmt.Errorf("use_model must be a string")
+            }
+
+            model := modelRegistry.GetModel(modelName)
+            if model == nil {
+                return nil, fmt.Errorf("model '%s' not found in registry", modelName)
+            }
+
+            // Remove use_model and $models from result
+            result := make(map[string]interface{})
+            for key, value := range data {
+                if key != "use_model" && key != "$models" {
+                    result[key] = value
+                }
+            }
+
+            // Apply model to all top-level values
+            finalResult := make(map[string]interface{})
+            for key, value := range result {
+                if valueMap, ok := value.(map[string]interface{}); ok {
+                    finalResult[key] = applyModelToMap(valueMap, model)
+                } else if arr, ok := value.([]interface{}); ok {
+                    newArr := make([]interface{}, len(arr))
+                    for i, item := range arr {
+                        if itemMap, ok := item.(map[string]interface{}); ok {
+                            newArr[i] = applyModelToMap(itemMap, model)
+                        } else {
+                            newArr[i] = item
+                        }
+                    }
+                    finalResult[key] = newArr
+                } else {
+                    finalResult[key] = value
+                }
+            }
+
+            return finalResult, nil
+        }
+    }
+
+    // No model application needed
+    // Remove $models from output if present
+    if _, ok := data["$models"]; ok {
+        result := make(map[string]interface{})
+        for key, value := range data {
+            if key != "$models" {
+                result[key] = value
+            }
+        }
+        return result, nil
+    }
+
+    return data, nil
+}
+
+func LoadFlowWithModel(path string, registry *ModelRegistry) (map[string]interface{}, error) {
+    data, err := ioutil.ReadFile(path)
+    if err != nil {
+        return nil, err
+    }
+    return ParseFlowWithModel(string(data), registry)
 }
