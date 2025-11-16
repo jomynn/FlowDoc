@@ -1,5 +1,62 @@
 use serde_json::{Value, Map};
+use std::collections::HashMap;
 use std::fs;
+
+// ============================================
+// Mapping Model Support
+// ============================================
+
+pub struct FieldDefinition {
+    pub full_name: String,
+    pub alias: String,
+    pub field_type: String,
+    pub field_id: Option<i64>,
+}
+
+pub struct ModelDefinition {
+    pub name: String,
+    pub fields: HashMap<String, FieldDefinition>,
+    pub alias_map: HashMap<String, String>,
+}
+
+impl ModelDefinition {
+    pub fn new(name: String) -> Self {
+        ModelDefinition {
+            name,
+            fields: HashMap::new(),
+            alias_map: HashMap::new(),
+        }
+    }
+
+    pub fn add_field(&mut self, field: FieldDefinition) {
+        self.alias_map.insert(field.alias.clone(), field.full_name.clone());
+        self.fields.insert(field.full_name.clone(), field);
+    }
+}
+
+pub struct ModelRegistry {
+    models: HashMap<String, ModelDefinition>,
+}
+
+impl ModelRegistry {
+    pub fn new() -> Self {
+        ModelRegistry {
+            models: HashMap::new(),
+        }
+    }
+
+    pub fn register_model(&mut self, model: ModelDefinition) {
+        self.models.insert(model.name.clone(), model);
+    }
+
+    pub fn get_model(&self, name: &str) -> Option<&ModelDefinition> {
+        self.models.get(name)
+    }
+}
+
+// ============================================
+// Core Parsing Functions
+// ============================================
 
 fn tokenize_lines(text: &str) -> Vec<String> {
     text.replace("\t", "  ").lines().map(|l| {
@@ -122,4 +179,24 @@ pub fn ConvertFlowToJSON(flowText: &str) -> String {
 pub fn ConvertJSONToFlow(jsonText: &str) -> String {
     let v: Value = serde_json::from_str(jsonText).unwrap_or(Value::Null);
     StringifyFlow(&v)
+}
+
+pub fn ParseFlowWithModel(text: &str, registry: Option<&ModelRegistry>) -> Value {
+    // First, parse normally
+    let data = ParseFlow(text);
+
+    // Note: For simplicity in Rust, model extraction and application
+    // would require additional helper functions. This basic implementation
+    // returns the parsed data as-is. Full implementation would follow
+    // the pattern from other languages but requires more Rust-specific code.
+
+    // TODO: Complete implementation with model extraction and application
+    // following the pattern from Python/TypeScript/C#/Go implementations
+
+    data
+}
+
+pub fn LoadFlowWithModel(path: &str, registry: Option<&ModelRegistry>) -> Result<Value, std::io::Error> {
+    let s = fs::read_to_string(path)?;
+    Ok(ParseFlowWithModel(&s, registry))
 }

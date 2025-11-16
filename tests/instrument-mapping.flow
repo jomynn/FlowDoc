@@ -1,0 +1,48 @@
+$models:
+  Instrument:
+    fields:
+      id:
+        alias = i
+        type = string
+        id = 0
+
+      name:
+        alias = n
+        type = string
+        id = 1
+
+      lab_group:
+        alias = g
+        type = string
+        id = 2
+
+      status:
+        alias = s
+        type = string
+        id = 3
+
+      next_calibration:
+        alias = nc
+        type = date
+        id = 4
+
+use_model = Instrument
+
+instruments:
+  - i = INS-0001
+    n = "Oscilloscope A"
+    g = EL
+    s = active
+    nc = 2025-12-01
+
+  - i = INS-0002
+    n = "Micrometer B"
+    g = DM
+    s = active
+    nc = 2025-09-15
+
+  - i = INS-0003
+    n = "Spectrum Analyzer C"
+    g = RF
+    s = maintenance
+    nc = 2025-10-30
