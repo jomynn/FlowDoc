@@ -1,0 +1,10 @@
+{
+  "app": {
+    "name": "TestApp",
+    "version": "1.2.3"
+  },
+  "features": {
+    "list": ["a", "b", "c"],
+    "enabled": true
+  }
+}

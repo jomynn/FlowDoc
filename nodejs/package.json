@@ -1,0 +1,9 @@
+{
+  "name": "flowdoc",
+  "version": "1.0.0",
+  "description": "FlowDoc text and binary format utilities (CommonJS)",
+  "main": "flowdoc.js",
+  "dependencies": {
+    "@msgpack/msgpack": "^1.5.0"
+  }
+}

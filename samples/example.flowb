@@ -1,0 +1,2 @@
+/* example.flowb is a MessagePack encoding of samples/example.json
+   Binary files are not human-readable. Generate using library SaveFlowb utilities. */
